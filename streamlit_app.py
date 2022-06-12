@@ -1,76 +1,118 @@
-def run_the_app():
-    # 自己文件上传  -   单文件载入
-    st.sidebar.markdown("### 第一步：选择本地的一张图片(png/jpg)...")
-    uploaded_file = st.sidebar.file_uploader(" ")
-    
-    confidence_threshold, overlap_threshold = object_detector_ui()
-    
-    left_column,middle_column, right_column = st.sidebar.beta_columns(3)
-    
-    if middle_column.button('检测'):
-        image = load_local_image(uploaded_file)
-        st.image(uploaded_file, caption='The original image',
-                 use_column_width=True)
-        
-        yolo_boxes = yolo_v3(image, confidence_threshold, overlap_threshold)
-        draw_image_with_boxes(image, yolo_boxes, "Real-time Computer Vision",
-            "**YOLO v3 Model** (overlap `%3.1f`) (confidence `%3.1f`)" % (overlap_threshold, confidence_threshold))
-
-@st.cache(show_spinner=False)
-def read_markdown(path):
-    with open(path, "r",encoding = 'utf-8') as f:  # 打开文件
-        data = f.read()  # 读取文件
-    return data
-
-# Streamlit encourages well-structured code, like starting execution in a main() function.
-def main():
-    # 1 初始化界面
-    # Render the readme as markdown using st.markdown.
-    readme_text = st.markdown(read_markdown("instructions_yolov3.md"))
-    
-    # 2 下载yolov3的模型文件
-    # Download external dependencies.
-    for filename in EXTERNAL_DEPENDENCIES.keys():
-        download_file(filename)
-        # 下载yolov3文件
-
-    # Once we have the dependencies, add a selector for the app mode on the sidebar.
-    st.sidebar.title("图像检测参数调节器")   # 侧边栏
-    app_mode = st.sidebar.selectbox("切换页面模式:",
-        ["Run the app","Show instructions", "Show the source code"])
-    
-    # 展示栏目三
-    if app_mode == "Run the app":
-        #readme_text.empty()      # 刷新页面
-        st.markdown('---')
-        st.markdown('## YOLOv3 检测结果:')
-        run_the_app() # 运行内容
-    # 展示栏目一
-    elif app_mode == "Show instructions":
-        st.sidebar.success('To continue select "Run the app".')
-    # 展示栏目二
-    elif app_mode == "Show the source code":
-        readme_text.empty()     # 刷新页面
-        st.code(read_markdown("streamlit_app_yolov3.py"))
+from io import StringIO
+from pathlib import Path
+import streamlit as st
+import time
+from detect import detect
+import os
+import sys
+import argparse
+from PIL import Image
 
 
+def get_subdirs(b='.'):
+    '''
+        Returns all sub-directories in a specific Path
+    '''
+    result = []
+    for d in os.listdir(b):
+        bd = os.path.join(b, d)
+        if os.path.isdir(bd):
+            result.append(bd)
+    return result
 
-if __name__ == "__main__":
-    file_path = 'yolov3.weights'
-    # Path to the Streamlit public S3 bucket
-    DATA_URL_ROOT = "https://streamlit-self-driving.s3-us-west-2.amazonaws.com/"
-    
-    # External files to download.
-    EXTERNAL_DEPENDENCIES = {
-        "yolov3.weights": {
-            "url": "https://pjreddie.com/media/files/yolov3.weights",
-            "size": 248007048
-        },
-        "yolov3.cfg": {
-            "url": "https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3.cfg",
-            "size": 8342
-        }
-    }
-    
-    
-    main()
+
+def get_detection_folder():
+    '''
+        Returns the latest folder in a runs\detect
+    '''
+    return max(get_subdirs(os.path.join('runs', 'detect')), key=os.path.getmtime)
+
+
+if __name__ == '__main__':
+
+    st.title('YOLOv5 Streamlit App')
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--weights', nargs='+', type=str,
+                        default='weights/yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--source', type=str,
+                        default='data/images', help='source')
+    parser.add_argument('--img-size', type=int, default=640,
+                        help='inference size (pixels)')
+    parser.add_argument('--conf-thres', type=float,
+                        default=0.35, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float,
+                        default=0.45, help='IOU threshold for NMS')
+    parser.add_argument('--device', default='',
+                        help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--view-img', action='store_true',
+                        help='display results')
+    parser.add_argument('--save-txt', action='store_true',
+                        help='save results to *.txt')
+    parser.add_argument('--save-conf', action='store_true',
+                        help='save confidences in --save-txt labels')
+    parser.add_argument('--nosave', action='store_true',
+                        help='do not save images/videos')
+    parser.add_argument('--classes', nargs='+', type=int,
+                        help='filter by class: --class 0, or --class 0 2 3')
+    parser.add_argument('--agnostic-nms', action='store_true',
+                        help='class-agnostic NMS')
+    parser.add_argument('--augment', action='store_true',
+                        help='augmented inference')
+    parser.add_argument('--update', action='store_true',
+                        help='update all models')
+    parser.add_argument('--project', default='runs/detect',
+                        help='save results to project/name')
+    parser.add_argument('--name', default='exp',
+                        help='save results to project/name')
+    parser.add_argument('--exist-ok', action='store_true',
+                        help='existing project/name ok, do not increment')
+    opt = parser.parse_args()
+    print(opt)
+
+    source = ("图片检测", "视频检测")
+    source_index = st.sidebar.selectbox("选择输入", range(
+        len(source)), format_func=lambda x: source[x])
+
+    if source_index == 0:
+        uploaded_file = st.sidebar.file_uploader(
+            "上传图片", type=['png', 'jpeg', 'jpg'])
+        if uploaded_file is not None:
+            is_valid = True
+            with st.spinner(text='资源加载中...'):
+                st.sidebar.image(uploaded_file)
+                picture = Image.open(uploaded_file)
+                picture = picture.save(f'data/images/{uploaded_file.name}')
+                opt.source = f'data/images/{uploaded_file.name}'
+        else:
+            is_valid = False
+    else:
+        uploaded_file = st.sidebar.file_uploader("上传视频", type=['mp4'])
+        if uploaded_file is not None:
+            is_valid = True
+            with st.spinner(text='资源加载中...'):
+                st.sidebar.video(uploaded_file)
+                with open(os.path.join("data", "videos", uploaded_file.name), "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                opt.source = f'data/videos/{uploaded_file.name}'
+        else:
+            is_valid = False
+
+    if is_valid:
+        print('valid')
+        if st.button('开始检测'):
+
+            detect(opt)
+
+            if source_index == 0:
+                with st.spinner(text='Preparing Images'):
+                    for img in os.listdir(get_detection_folder()):
+                        st.image(str(Path(f'{get_detection_folder()}') / img))
+
+                    st.balloons()
+            else:
+                with st.spinner(text='Preparing Video'):
+                    for vid in os.listdir(get_detection_folder()):
+                        st.video(str(Path(f'{get_detection_folder()}') / vid))
+
+                    st.balloons()
