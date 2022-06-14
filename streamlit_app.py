@@ -34,9 +34,8 @@ if __name__ == '__main__':
         else:
             is_valid = False
             
-     source_adv = ("无目标攻击", "有目标攻击","消失攻击", "伪造攻击")
-     adv_index = st.sidebar.selectbox("选择输入", range(
-        len(source_adv)), format_func=lambda x: source[x])
+    source_adv = ("无目标攻击", "有目标攻击","消失攻击", "伪造攻击")
+    adv_index = st.sidebar.selectbox("选择输入", range(len(source_adv)), format_func=lambda x: source[x])
     
     if is_valid:
         print('valid')
